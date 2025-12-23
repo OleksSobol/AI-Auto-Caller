@@ -1,0 +1,21 @@
+{
+  "greeting": "Hello! This is an automated assistant. How can I help you today?",
+  "unavailable": "I'm currently unavailable. Please leave a message after the tone.",
+  "business_hours": "Thank you for calling. Our business hours are Monday through Friday, 9 AM to 5 PM.",
+  "goodbye": "Thank you for calling. Have a great day!",
+  "hold": "Please hold while I check that information for you.",
+  "callback": "I'll make sure to call you back as soon as possible.",
+  "custom_responses": [
+    "I'm sorry, I didn't catch that. Could you please repeat?",
+    "Let me transfer you to the right department.",
+    "I'll send you a text message with more details.",
+    "Thank you for your patience.",
+    "Is there anything else I can help you with?"
+  ],
+  "context_responses": {
+    "appointment": "I can help you schedule an appointment. What day works best for you?",
+    "pricing": "I'd be happy to discuss pricing. Let me get someone who can help with that.",
+    "support": "I understand you need support. Let me connect you with our technical team.",
+    "general_inquiry": "Thank you for your inquiry. How may I assist you today?"
+  }
+}
