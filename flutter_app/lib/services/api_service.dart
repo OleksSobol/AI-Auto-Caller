@@ -1,0 +1,228 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+
+class ApiService {
+  // Change this to your backend URL
+  final String baseUrl = 'http://localhost:8000';
+
+  // Answer incoming call
+  Future<Map<String, dynamic>> answerCall(String callerNumber, {String? callId}) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/answer-call'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'caller_number': callerNumber,
+          if (callId != null) 'call_id': callId,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        throw Exception('Failed to answer call: ${response.body}');
+      }
+    } catch (e) {
+      throw Exception('Error answering call: $e');
+    }
+  }
+
+  // Process user speech
+  Future<Map<String, dynamic>> processSpeech(String callId, String text) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/process-speech'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'call_id': callId,
+          'text': text,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        throw Exception('Failed to process speech: ${response.body}');
+      }
+    } catch (e) {
+      throw Exception('Error processing speech: $e');
+    }
+  }
+
+  // End call
+  Future<Map<String, dynamic>> endCall(String callId) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/end-call/$callId'),
+      );
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        throw Exception('Failed to end call: ${response.body}');
+      }
+    } catch (e) {
+      throw Exception('Error ending call: $e');
+    }
+  }
+
+  // Get active calls
+  Future<List<Map<String, dynamic>>> getActiveCalls() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/active-calls'),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return List<Map<String, dynamic>>.from(data['active_calls']);
+      } else {
+        throw Exception('Failed to get active calls');
+      }
+    } catch (e) {
+      throw Exception('Error getting active calls: $e');
+    }
+  }
+
+  // Get call history
+  Future<List<Map<String, dynamic>>> getCallHistory({int limit = 10}) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/call-history?limit=$limit'),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return List<Map<String, dynamic>>.from(data['history']);
+      } else {
+        throw Exception('Failed to get call history');
+      }
+    } catch (e) {
+      throw Exception('Error getting call history: $e');
+    }
+  }
+
+  // Get responses
+  Future<Map<String, dynamic>> getResponses() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/responses'),
+      );
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        throw Exception('Failed to get responses');
+      }
+    } catch (e) {
+      throw Exception('Error getting responses: $e');
+    }
+  }
+
+  // Add custom response
+  Future<void> addResponse(String responseText) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/responses?response_text=$responseText'),
+      );
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to add response');
+      }
+    } catch (e) {
+      throw Exception('Error adding response: $e');
+    }
+  }
+
+  // Update response
+  Future<void> updateResponse(String category, String text) async {
+    try {
+      final response = await http.put(
+        Uri.parse('$baseUrl/api/responses'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'category': category,
+          'text': text,
+        }),
+      );
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to update response');
+      }
+    } catch (e) {
+      throw Exception('Error updating response: $e');
+    }
+  }
+
+  // Update settings
+  Future<void> updateSettings(Map<String, dynamic> settings) async {
+    try {
+      final response = await http.put(
+        Uri.parse('$baseUrl/api/settings'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(settings),
+      );
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to update settings');
+      }
+    } catch (e) {
+      throw Exception('Error updating settings: $e');
+    }
+  }
+
+  // Toggle auto-answer
+  Future<void> toggleAutoAnswer(bool enabled) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/settings/auto-answer?enabled=$enabled'),
+      );
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to toggle auto-answer');
+      }
+    } catch (e) {
+      throw Exception('Error toggling auto-answer: $e');
+    }
+  }
+
+  // Get settings
+  Future<Map<String, dynamic>> getSettings() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/settings'),
+      );
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        throw Exception('Failed to get settings');
+      }
+    } catch (e) {
+      throw Exception('Error getting settings: $e');
+    }
+  }
+
+  // Generate TTS
+  Future<String> generateTTS(String text, {String engine = 'gtts'}) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/tts'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'text': text,
+          'engine': engine,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        // Returns audio file path or URL
+        return '$baseUrl/api/tts';
+      } else {
+        throw Exception('Failed to generate TTS');
+      }
+    } catch (e) {
+      throw Exception('Error generating TTS: $e');
+    }
+  }
+}
