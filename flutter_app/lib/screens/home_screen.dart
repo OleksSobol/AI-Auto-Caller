@@ -6,6 +6,7 @@ import '../services/call_service.dart';
 import 'responses_screen.dart';
 import 'settings_screen.dart';
 import 'call_history_screen.dart';
+import 'scambaiter_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -366,13 +367,25 @@ class _HomeScreenState extends State<HomeScreen> {
                 }
               },
             ),
+            _buildActionCard(
+              'Scambaiter',
+              Icons.pest_control,
+              () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const ScambaiterScreen()),
+                );
+              },
+              color: Colors.orange,
+            ),
           ],
         ),
       ],
     );
   }
 
-  Widget _buildActionCard(String title, IconData icon, VoidCallback onTap) {
+  Widget _buildActionCard(String title, IconData icon, VoidCallback onTap,
+      {Color? color}) {
     return Card(
       child: InkWell(
         onTap: onTap,
@@ -381,7 +394,7 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 32),
+              Icon(icon, size: 32, color: color),
               const SizedBox(height: 8),
               Text(
                 title,

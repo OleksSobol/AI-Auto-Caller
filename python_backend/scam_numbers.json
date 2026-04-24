@@ -1,0 +1,14 @@
+{
+  "numbers": [],
+  "categories": {
+    "irs": "IRS/Tax scam",
+    "social_security": "Social Security scam",
+    "tech_support": "Tech support scam",
+    "warranty": "Car warranty scam",
+    "crypto": "Crypto scam",
+    "lottery": "Lottery/prize scam",
+    "bank": "Bank fraud scam",
+    "other": "Other scam"
+  },
+  "notes": "Add known scam numbers here. Sources: 800notes.com, ScamNumbers.info, r/scambait"
+}

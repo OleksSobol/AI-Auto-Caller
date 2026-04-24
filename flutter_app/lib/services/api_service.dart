@@ -216,7 +216,6 @@ class ApiService {
       );
 
       if (response.statusCode == 200) {
-        // Returns audio file path or URL
         return '$baseUrl/api/tts';
       } else {
         throw Exception('Failed to generate TTS');
@@ -224,5 +223,73 @@ class ApiService {
     } catch (e) {
       throw Exception('Error generating TTS: $e');
     }
+  }
+
+  // ------------------------------------------------------------------ //
+  // Scambaiter API                                                       //
+  // ------------------------------------------------------------------ //
+
+  Future<Map<String, dynamic>> getScambaiterPersonas() async {
+    final r = await http.get(Uri.parse('$baseUrl/api/scambaiter/personas'));
+    if (r.statusCode == 200) return jsonDecode(r.body);
+    throw Exception('Failed to load personas');
+  }
+
+  Future<Map<String, dynamic>> getScamNumbers() async {
+    final r = await http.get(Uri.parse('$baseUrl/api/scambaiter/numbers'));
+    if (r.statusCode == 200) return jsonDecode(r.body);
+    throw Exception('Failed to load scam numbers');
+  }
+
+  Future<void> addScamNumber(String number, String category) async {
+    final r = await http.post(
+      Uri.parse('$baseUrl/api/scambaiter/numbers'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'number': number, 'category': category, 'notes': ''}),
+    );
+    if (r.statusCode != 200) throw Exception('Failed to add number');
+  }
+
+  Future<void> deleteScamNumber(String number) async {
+    final encoded = Uri.encodeComponent(number);
+    final r = await http.delete(
+        Uri.parse('$baseUrl/api/scambaiter/numbers/$encoded'));
+    if (r.statusCode != 200) throw Exception('Failed to delete number');
+  }
+
+  Future<Map<String, dynamic>> startScamCampaign({
+    required String number,
+    required String mode,
+    required String personaId,
+    required String musicTrack,
+    required bool repeat,
+    required int repeatDelay,
+  }) async {
+    final r = await http.post(
+      Uri.parse('$baseUrl/api/scambaiter/start'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'number': number,
+        'mode': mode,
+        'persona_id': personaId,
+        'music_track': musicTrack,
+        'repeat': repeat,
+        'repeat_delay': repeatDelay,
+      }),
+    );
+    if (r.statusCode == 200) return jsonDecode(r.body);
+    throw Exception('Failed to start campaign: ${r.body}');
+  }
+
+  Future<Map<String, dynamic>> stopScamCampaign() async {
+    final r = await http.post(Uri.parse('$baseUrl/api/scambaiter/stop'));
+    if (r.statusCode == 200) return jsonDecode(r.body);
+    throw Exception('Failed to stop campaign');
+  }
+
+  Future<Map<String, dynamic>> getScamCampaignStatus() async {
+    final r = await http.get(Uri.parse('$baseUrl/api/scambaiter/status'));
+    if (r.statusCode == 200) return jsonDecode(r.body);
+    throw Exception('Failed to get status');
   }
 }

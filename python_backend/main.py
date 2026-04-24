@@ -5,9 +5,12 @@ Provides REST API for call handling, TTS, and AI responses
 
 import os
 import uuid
+import asyncio
+import random
+from pathlib import Path
 from typing import Optional, List
-from fastapi import FastAPI, HTTPException, UploadFile, File
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Form, Request
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -15,6 +18,8 @@ from dotenv import load_dotenv
 from call_handler import CallHandler
 from ai_responder import AIResponder
 from tts_engine import TTSEngine
+from scam_caller import ScamCaller
+from ivr_navigator import IVRNavigator
 
 # Load environment variables
 load_dotenv()
@@ -40,6 +45,10 @@ call_handler = CallHandler(
     tts_engine=os.getenv("DEFAULT_TTS_ENGINE", "gtts"),
     use_ai=bool(os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY"))
 )
+
+# Global scam caller instance (one campaign at a time)
+_scam_caller: Optional[ScamCaller] = None
+_scam_task: Optional[asyncio.Task] = None
 
 
 # Pydantic models
@@ -68,6 +77,22 @@ class SettingsUpdate(BaseModel):
     use_ai: Optional[bool] = None
     auto_answer: Optional[bool] = None
     max_call_duration: Optional[int] = None
+
+
+class ScamNumberAdd(BaseModel):
+    number: str
+    category: str = "other"
+    notes: str = ""
+
+
+class ScamCampaignStart(BaseModel):
+    number: str
+    mode: str = "ai"              # 'ai' or 'music'
+    persona_id: str = "confused_grandma"
+    music_track: str = "never_gonna_give_you_up"
+    tts_engine: str = "gtts"
+    repeat: bool = True
+    repeat_delay: int = 30        # seconds between redials
 
 
 # API Routes
@@ -255,6 +280,212 @@ async def health_check():
         "active_calls": len(call_handler.active_calls),
         "total_calls_processed": len(call_handler.call_history)
     }
+
+
+# ============================================================ #
+#  SCAMBAITER ENDPOINTS                                         #
+# ============================================================ #
+
+@app.get("/api/scambaiter/personas")
+async def get_personas():
+    """List all available AI personas for scambaiting"""
+    import json
+    path = Path(__file__).parent / "scambaiter_personas.json"
+    with open(path) as f:
+        data = json.load(f)
+    return {
+        "personas": data["personas"],
+        "music_tracks": list(data["music_tracks"].keys()),
+    }
+
+
+@app.get("/api/scambaiter/numbers")
+async def get_scam_numbers():
+    """Get the list of tracked scam numbers"""
+    caller = ScamCaller.__new__(ScamCaller)
+    caller.__init__.__func__  # avoid real __init__
+    import json
+    path = Path(__file__).parent / "scam_numbers.json"
+    with open(path) as f:
+        data = json.load(f)
+    return data
+
+
+@app.post("/api/scambaiter/numbers")
+async def add_scam_number(entry: ScamNumberAdd):
+    """Add a scam number to the list"""
+    sc = ScamCaller(repeat=False)
+    sc.add_number(entry.number, entry.category, entry.notes)
+    return {"status": "added", "number": entry.number}
+
+
+@app.delete("/api/scambaiter/numbers/{number}")
+async def delete_scam_number(number: str):
+    """Remove a scam number from the list"""
+    sc = ScamCaller(repeat=False)
+    sc.remove_number(number)
+    return {"status": "removed", "number": number}
+
+
+@app.post("/api/scambaiter/start")
+async def start_scam_campaign(campaign: ScamCampaignStart):
+    """
+    Start an automated scambaiter campaign.
+
+    Dials the scam number, navigates IVR menus, then either:
+    - mode='ai'    → engages scammer with a chosen AI persona
+    - mode='music' → loops an audio file (e.g. Never Gonna Give You Up)
+
+    With repeat=true the dialer redials automatically after each call ends.
+    """
+    global _scam_caller, _scam_task
+
+    if _scam_task and not _scam_task.done():
+        raise HTTPException(status_code=409, detail="A campaign is already running. Stop it first.")
+
+    _scam_caller = ScamCaller(
+        mode=campaign.mode,
+        persona_id=campaign.persona_id,
+        music_track=campaign.music_track,
+        tts_engine=campaign.tts_engine,
+        repeat=campaign.repeat,
+        repeat_delay=campaign.repeat_delay,
+    )
+
+    # Run in background so the HTTP response returns immediately
+    _scam_task = asyncio.create_task(
+        _scam_caller.start_campaign(campaign.number)
+    )
+
+    return {
+        "status": "started",
+        "number": campaign.number,
+        "mode": campaign.mode,
+        "persona": campaign.persona_id if campaign.mode == "ai" else None,
+        "music_track": campaign.music_track if campaign.mode == "music" else None,
+        "repeat": campaign.repeat,
+        "repeat_delay_seconds": campaign.repeat_delay,
+        "message": "Campaign running in background. Use /api/scambaiter/status to monitor."
+    }
+
+
+@app.post("/api/scambaiter/stop")
+async def stop_scam_campaign():
+    """Stop the currently running scambaiter campaign"""
+    global _scam_task, _scam_caller
+
+    if not _scam_task or _scam_task.done():
+        return {"status": "not_running"}
+
+    _scam_task.cancel()
+    stats = _scam_caller.get_stats() if _scam_caller else {}
+    _scam_caller = None
+    _scam_task = None
+
+    return {"status": "stopped", "stats": stats}
+
+
+@app.get("/api/scambaiter/status")
+async def scam_campaign_status():
+    """Get current campaign status and stats"""
+    if not _scam_task or _scam_task.done():
+        return {"running": False}
+
+    stats = _scam_caller.get_stats() if _scam_caller else {}
+    return {"running": True, **stats}
+
+
+@app.post("/api/scambaiter/test-ivr")
+async def test_ivr(prompt: str):
+    """Test the IVR navigator against a prompt string"""
+    nav = IVRNavigator()
+    key = nav.decide(prompt)
+    return {"prompt": prompt, "key_to_press": key}
+
+
+# ============================================================ #
+#  TWILIO WEBHOOKS  (called by Twilio during live calls)        #
+# ============================================================ #
+
+@app.post("/twilio/voice")
+async def twilio_voice_webhook(request: Request):
+    """
+    Twilio calls this webhook when the outbound call is answered.
+    Returns TwiML telling Twilio what to say/play and how to gather speech.
+    """
+    import json
+    personas_path = Path(__file__).parent / "scambaiter_personas.json"
+    with open(personas_path) as f:
+        data = json.load(f)
+
+    persona_id = _scam_caller.persona_id if _scam_caller else "confused_grandma"
+    personas = {p["id"]: p for p in data["personas"]}
+    persona = personas.get(persona_id, data["personas"][0])
+    filler = random.choice(persona["filler_phrases"])
+
+    base = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
+    twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="alice">{filler}</Say>
+  <Gather input="speech" action="{base}/twilio/gather" method="POST"
+          speechTimeout="3" timeout="15">
+    <Say voice="alice">Go ahead.</Say>
+  </Gather>
+  <Redirect>{base}/twilio/voice</Redirect>
+</Response>"""
+    return Response(content=twiml, media_type="application/xml")
+
+
+@app.post("/twilio/gather")
+async def twilio_gather_webhook(request: Request):
+    """
+    Twilio posts the transcribed speech here.
+    We generate a persona response and return TwiML.
+    """
+    import json
+    form = await request.form()
+    speech_result = form.get("SpeechResult", "")
+    print(f"[TWILIO] Scammer said: {speech_result}")
+
+    # Generate persona response
+    personas_path = Path(__file__).parent / "scambaiter_personas.json"
+    with open(personas_path) as f:
+        data = json.load(f)
+
+    persona_id = _scam_caller.persona_id if _scam_caller else "confused_grandma"
+    personas = {p["id"]: p for p in data["personas"]}
+    persona = personas.get(persona_id, data["personas"][0])
+
+    # Try AI response, fall back to filler phrase
+    response_text = random.choice(persona["filler_phrases"])
+    if _scam_caller:
+        responder = AIResponder(
+            use_ai=bool(os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY"))
+        )
+        try:
+            response_text = _scam_caller._persona_response(persona, speech_result, responder)
+        except Exception:
+            pass
+
+    base = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
+    twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="alice">{response_text}</Say>
+  <Gather input="speech" action="{base}/twilio/gather" method="POST"
+          speechTimeout="3" timeout="15">
+  </Gather>
+  <Redirect>{base}/twilio/voice</Redirect>
+</Response>"""
+    return Response(content=twiml, media_type="application/xml")
+
+
+# Serve local audio files for music mode
+@app.get("/audio/{filename}")
+async def serve_audio(filename: str):
+    path = Path(__file__).parent / "audio" / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Audio file not found")
+    return FileResponse(str(path), media_type="audio/mpeg")
 
 
 # Run server
