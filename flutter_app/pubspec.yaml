@@ -36,6 +36,10 @@ dependencies:
   audioplayers: ^5.2.1
   just_audio: ^0.9.36
 
+  # Notifications (add google-services.json to android/app to activate)
+  # firebase_core: ^2.24.0
+  # firebase_messaging: ^14.7.9
+
   # Utilities
   intl: ^0.18.1
   uuid: ^4.2.2

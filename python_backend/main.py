@@ -1,16 +1,19 @@
 """
 FastAPI Server for AI Auto Caller
-Provides REST API for call handling, TTS, and AI responses
+Provides REST API for call handling, TTS, AI responses, recordings,
+push notifications, scam number sync, and a live web dashboard.
 """
 
 import os
 import uuid
 import asyncio
 import random
+import json
 from pathlib import Path
-from typing import Optional, List
-from fastapi import FastAPI, HTTPException, Form, Request
+from typing import Optional, List, Set
+from fastapi import FastAPI, HTTPException, Form, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -18,8 +21,12 @@ from dotenv import load_dotenv
 from call_handler import CallHandler
 from ai_responder import AIResponder
 from tts_engine import TTSEngine
+from stt_engine import STTEngine
+from call_recorder import CallRecorder
 from scam_caller import ScamCaller
 from ivr_navigator import IVRNavigator
+from notification_service import get_notifier
+from scam_db_sync import sync_scam_numbers, start_auto_sync
 
 # Load environment variables
 load_dotenv()
@@ -28,33 +35,83 @@ load_dotenv()
 app = FastAPI(
     title="AI Auto Caller API",
     description="Automatic phone call answering with AI-powered responses",
-    version="1.0.0"
+    version="2.0.0"
 )
+
+# Serve web dashboard at /dashboard
+DASHBOARD_DIR = Path(__file__).parent / "dashboard"
+app.mount("/dashboard", StaticFiles(directory=str(DASHBOARD_DIR), html=True), name="dashboard")
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Initialize call handler
+# ── Core services ──────────────────────────────────────────────────────────── #
 call_handler = CallHandler(
     tts_engine=os.getenv("DEFAULT_TTS_ENGINE", "gtts"),
     use_ai=bool(os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY"))
 )
+stt_engine = STTEngine(engine=os.getenv("DEFAULT_STT_ENGINE", "google"))
+recorder   = CallRecorder()
+notifier   = get_notifier()
 
-# Global scam caller instance (one campaign at a time)
+# ── Scambaiter globals ─────────────────────────────────────────────────────── #
 _scam_caller: Optional[ScamCaller] = None
 _scam_task: Optional[asyncio.Task] = None
 
 
-# Pydantic models
+# ── WebSocket broadcast ────────────────────────────────────────────────────── #
+_ws_clients: Set[WebSocket] = set()
+
+
+async def broadcast(event: str, data: dict):
+    """Push a JSON event to all connected dashboard clients."""
+    message = json.dumps({"event": event, "data": data})
+    dead = set()
+    for ws in _ws_clients:
+        try:
+            await ws.send_text(message)
+        except Exception:
+            dead.add(ws)
+    _ws_clients -= dead
+
+
+@app.websocket("/ws/dashboard")
+async def ws_dashboard(websocket: WebSocket):
+    await websocket.accept()
+    _ws_clients.add(websocket)
+    try:
+        while True:
+            await websocket.receive_text()   # keep-alive; client sends nothing
+    except WebSocketDisconnect:
+        _ws_clients.discard(websocket)
+
+
+# ── Startup tasks ──────────────────────────────────────────────────────────── #
+@app.on_event("startup")
+async def on_startup():
+    if os.getenv("AUTO_SYNC_SCAM_DB", "false").lower() == "true":
+        asyncio.create_task(start_auto_sync(
+            interval_hours=int(os.getenv("SYNC_INTERVAL_HOURS", "24"))
+        ))
+
+
+# ── Pydantic models ────────────────────────────────────────────────────────── #
 class IncomingCall(BaseModel):
     call_id: Optional[str] = None
     caller_number: str
+
+
+class TranscribeRequest(BaseModel):
+    call_id: str
+    audio_base64: str                  # base64-encoded raw PCM bytes
+    sample_rate: int = 16000
+    engine: Optional[str] = None      # overrides server default
 
 
 class UserSpeech(BaseModel):
@@ -110,37 +167,72 @@ async def root():
 
 @app.post("/api/answer-call")
 async def answer_call(call: IncomingCall):
-    """
-    Handle incoming call
-
-    Auto-answers the call and sends greeting
-    """
+    """Auto-answer incoming call, start recording, push notification."""
     try:
-        # Generate call ID if not provided
         if not call.call_id:
             call.call_id = f"call_{uuid.uuid4().hex[:8]}"
 
         result = await call_handler.handle_incoming_call(
-            call.call_id,
-            call.caller_number
+            call.call_id, call.caller_number
         )
+
+        if result.get("status") == "answered":
+            # Start recording
+            recorder.start_recording(call.call_id, call.caller_number, "inbound")
+            # Push notification
+            asyncio.create_task(notifier.notify_call_answered(
+                call.caller_number, call.call_id
+            ))
+            # Broadcast to dashboard
+            asyncio.create_task(broadcast("call_answered", {
+                "caller": call.caller_number, "call_id": call.call_id
+            }))
+
         return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/transcribe")
+async def transcribe_audio(req: TranscribeRequest):
+    """
+    Transcribe base64-encoded audio to text using Whisper or Google STT.
+    Optionally process the transcript as user speech for an active call.
+    """
+    import base64
+    try:
+        audio_bytes = base64.b64decode(req.audio_base64)
+        engine = req.engine or stt_engine.engine
+        local_stt = STTEngine(engine)
+        text = local_stt.transcribe(audio_bytes, req.sample_rate)
+
+        # If there's an active call with this ID, feed the transcript in
+        if req.call_id in call_handler.active_calls and text:
+            asyncio.create_task(broadcast("transcript", {
+                "call_id": req.call_id, "role": "user", "text": text
+            }))
+
+        return {"call_id": req.call_id, "transcript": text, "engine": engine}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/process-speech")
 async def process_speech(speech: UserSpeech):
-    """
-    Process user's speech and generate AI response
-
-    Receives transcribed speech, generates response, and creates TTS audio
-    """
+    """Process user speech, generate AI response, broadcast transcript."""
     try:
         result = await call_handler.process_user_speech(
-            speech.call_id,
-            speech.text
+            speech.call_id, speech.text
         )
+        # Broadcast both sides to dashboard
+        asyncio.create_task(broadcast("transcript", {
+            "call_id": speech.call_id, "role": "user", "text": speech.text
+        }))
+        if "response" in result:
+            asyncio.create_task(broadcast("transcript", {
+                "call_id": speech.call_id, "role": "assistant",
+                "text": result["response"]
+            }))
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -148,9 +240,27 @@ async def process_speech(speech: UserSpeech):
 
 @app.post("/api/end-call/{call_id}")
 async def end_call(call_id: str):
-    """End an active call"""
+    """End active call, stop recording, push notification."""
     try:
         result = await call_handler.end_call(call_id)
+        # Stop recording
+        rec_meta = recorder.stop_recording(call_id)
+        if rec_meta:
+            asyncio.create_task(notifier.notify_recording_ready(
+                rec_meta["recording_id"],
+                rec_meta["caller_number"]
+            ))
+            asyncio.create_task(broadcast("recording", {
+                "recording_id": rec_meta["recording_id"],
+                "caller": rec_meta["caller_number"]
+            }))
+        duration = result.get("duration", 0)
+        asyncio.create_task(notifier.notify_call_ended(
+            result.get("summary", {}).get("caller_number", "Unknown"), duration
+        ))
+        asyncio.create_task(broadcast("call_ended", {
+            "call_id": call_id, "duration": duration
+        }))
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -278,8 +388,97 @@ async def health_check():
     return {
         "status": "healthy",
         "active_calls": len(call_handler.active_calls),
-        "total_calls_processed": len(call_handler.call_history)
+        "total_calls_processed": len(call_handler.call_history),
+        "recordings": recorder.get_stats(),
+        "dashboard_clients": len(_ws_clients),
     }
+
+
+# ============================================================ #
+#  RECORDINGS ENDPOINTS                                         #
+# ============================================================ #
+
+@app.get("/api/recordings")
+async def list_recordings(limit: int = 20):
+    return {"recordings": recorder.get_recordings(limit),
+            **recorder.get_stats()}
+
+
+@app.get("/api/recordings/{recording_id}")
+async def get_recording(recording_id: str):
+    rec = recorder.get_recording(recording_id)
+    if not rec:
+        raise HTTPException(status_code=404, detail="Recording not found")
+    return rec
+
+
+@app.get("/api/recordings/{recording_id}/audio")
+async def stream_recording(recording_id: str):
+    rec = recorder.get_recording(recording_id)
+    if not rec or not rec.get("file_path"):
+        raise HTTPException(status_code=404, detail="Audio file not found")
+    path = Path(rec["file_path"])
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Audio file missing on disk")
+    media = "audio/mpeg" if path.suffix == ".mp3" else "audio/wav"
+    return FileResponse(str(path), media_type=media)
+
+
+@app.delete("/api/recordings/{recording_id}")
+async def delete_recording(recording_id: str):
+    if recorder.delete_recording(recording_id):
+        return {"status": "deleted"}
+    raise HTTPException(status_code=404, detail="Recording not found")
+
+
+# ============================================================ #
+#  NOTIFICATIONS ENDPOINTS                                      #
+# ============================================================ #
+
+@app.post("/api/notifications/register")
+async def register_device(token: str):
+    """Register an FCM device token for push notifications."""
+    notifier.register_token(token)
+    return {"status": "registered"}
+
+
+@app.delete("/api/notifications/register")
+async def unregister_device(token: str):
+    notifier.unregister_token(token)
+    return {"status": "unregistered"}
+
+
+@app.post("/api/notifications/test")
+async def send_test_notification():
+    ok = await notifier.send("🧪 Test Notification",
+                             "AI Auto Caller is working!")
+    return {"sent": ok}
+
+
+# ============================================================ #
+#  SCAM NUMBER SYNC ENDPOINTS                                   #
+# ============================================================ #
+
+@app.post("/api/scambaiter/sync")
+async def trigger_scam_sync():
+    """Manually trigger a scam number database sync from public sources."""
+    result = await sync_scam_numbers(notify=True)
+    asyncio.create_task(broadcast("sync_done", result))
+    return result
+
+
+@app.get("/api/scambaiter/sync/status")
+async def sync_status():
+    import json
+    from scam_db_sync import NUMBERS_FILE
+    if NUMBERS_FILE.exists():
+        with open(NUMBERS_FILE) as f:
+            data = json.load(f)
+        return {
+            "total_numbers": len(data.get("numbers", [])),
+            "last_sync": data.get("last_sync"),
+        }
+    return {"total_numbers": 0, "last_sync": None}
 
 
 # ============================================================ #
@@ -357,6 +556,15 @@ async def start_scam_campaign(campaign: ScamCampaignStart):
         _scam_caller.start_campaign(campaign.number)
     )
 
+    asyncio.create_task(notifier.notify_scambaiter_started(
+        campaign.number, campaign.mode
+    ))
+    asyncio.create_task(broadcast("scam_update", {
+        "running": True, "current_number": campaign.number,
+        "mode": campaign.mode, "persona": campaign.persona_id,
+        "calls_made": 0, "total_time_wasted_minutes": 0,
+    }))
+
     return {
         "status": "started",
         "number": campaign.number,
@@ -382,6 +590,7 @@ async def stop_scam_campaign():
     _scam_caller = None
     _scam_task = None
 
+    asyncio.create_task(broadcast("scam_update", {"running": False, **stats}))
     return {"status": "stopped", "stats": stats}
 
 

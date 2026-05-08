@@ -1,6 +1,10 @@
 # Outbound calling
 twilio==8.10.0
 
+# Speech-to-text
+openai-whisper==20231117
+SpeechRecognition==3.10.1
+
 fastapi==0.104.1
 uvicorn==0.24.0
 pydantic==2.5.0

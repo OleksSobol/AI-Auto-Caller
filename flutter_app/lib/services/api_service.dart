@@ -226,6 +226,46 @@ class ApiService {
   }
 
   // ------------------------------------------------------------------ //
+  // Recordings API                                                       //
+  // ------------------------------------------------------------------ //
+
+  Future<Map<String, dynamic>> getRecordings({int limit = 20}) async {
+    final r = await http.get(Uri.parse('$baseUrl/api/recordings?limit=$limit'));
+    if (r.statusCode == 200) return jsonDecode(r.body);
+    throw Exception('Failed to get recordings');
+  }
+
+  Future<void> deleteRecording(String recordingId) async {
+    final r = await http.delete(
+        Uri.parse('$baseUrl/api/recordings/$recordingId'));
+    if (r.statusCode != 200) throw Exception('Failed to delete recording');
+  }
+
+  // ------------------------------------------------------------------ //
+  // Notifications API                                                    //
+  // ------------------------------------------------------------------ //
+
+  Future<void> registerFcmToken(String token) async {
+    final r = await http.post(
+        Uri.parse('$baseUrl/api/notifications/register?token=$token'));
+    if (r.statusCode != 200) throw Exception('Failed to register token');
+  }
+
+  Future<void> sendTestNotification() async {
+    await http.post(Uri.parse('$baseUrl/api/notifications/test'));
+  }
+
+  // ------------------------------------------------------------------ //
+  // Scam sync API                                                        //
+  // ------------------------------------------------------------------ //
+
+  Future<Map<String, dynamic>> syncScamDb() async {
+    final r = await http.post(Uri.parse('$baseUrl/api/scambaiter/sync'));
+    if (r.statusCode == 200) return jsonDecode(r.body);
+    throw Exception('Failed to sync scam DB');
+  }
+
+  // ------------------------------------------------------------------ //
   // Scambaiter API                                                       //
   // ------------------------------------------------------------------ //
 

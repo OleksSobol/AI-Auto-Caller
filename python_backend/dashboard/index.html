@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Auto Caller — Dashboard</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --card: #1a1d27;
+      --border: #2a2d3d;
+      --accent: #4f8ef7;
+      --green: #22c55e;
+      --red: #ef4444;
+      --orange: #f97316;
+      --yellow: #eab308;
+      --text: #e2e8f0;
+      --muted: #64748b;
+      --font: 'Segoe UI', system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font);
+           font-size: 14px; min-height: 100vh; }
+
+    /* ---- Layout ---- */
+    header { background: var(--card); border-bottom: 1px solid var(--border);
+             padding: 14px 24px; display: flex; align-items: center; gap: 12px; }
+    header h1 { font-size: 18px; font-weight: 700; }
+    #conn-dot { width: 10px; height: 10px; border-radius: 50%;
+                background: var(--red); transition: background .3s; }
+    #conn-dot.live { background: var(--green); }
+    #conn-label { font-size: 12px; color: var(--muted); }
+    .spacer { flex: 1; }
+
+    main { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+           gap: 16px; padding: 20px 24px; }
+
+    /* ---- Cards ---- */
+    .card { background: var(--card); border: 1px solid var(--border);
+            border-radius: 12px; padding: 18px; }
+    .card-title { font-size: 11px; font-weight: 600; letter-spacing: .08em;
+                  text-transform: uppercase; color: var(--muted); margin-bottom: 14px; }
+    .card.wide { grid-column: 1 / -1; }
+
+    /* ---- Stat numbers ---- */
+    .stat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .stat { background: var(--bg); border-radius: 8px; padding: 14px; }
+    .stat-val { font-size: 28px; font-weight: 700; line-height: 1; }
+    .stat-label { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .green { color: var(--green); }
+    .orange { color: var(--orange); }
+    .blue  { color: var(--accent); }
+    .red   { color: var(--red); }
+
+    /* ---- Live activity log ---- */
+    #log { background: var(--bg); border-radius: 8px; padding: 12px;
+           height: 220px; overflow-y: auto; font-family: monospace; font-size: 12px; }
+    .log-line { padding: 2px 0; border-bottom: 1px solid var(--border); }
+    .log-line .ts { color: var(--muted); margin-right: 8px; }
+    .log-line.call { color: var(--green); }
+    .log-line.scam  { color: var(--orange); }
+    .log-line.rec   { color: var(--accent); }
+    .log-line.err   { color: var(--red); }
+    .log-line.info  { color: var(--text); }
+
+    /* ---- Active calls ---- */
+    #active-calls { display: flex; flex-direction: column; gap: 8px; }
+    .call-row { background: var(--bg); border-radius: 8px; padding: 10px 14px;
+                display: flex; align-items: center; gap: 10px; }
+    .call-row .badge { font-size: 10px; font-weight: 600; padding: 2px 8px;
+                       border-radius: 99px; }
+    .badge-in  { background: #163a25; color: var(--green); }
+    .badge-out { background: #3a2516; color: var(--orange); }
+    .call-row .num { font-weight: 600; flex: 1; }
+    .call-row .dur { color: var(--muted); font-size: 12px; }
+
+    /* ---- Scambaiter panel ---- */
+    #scam-status { display: flex; align-items: center; gap: 10px;
+                   padding: 10px 14px; border-radius: 8px; background: var(--bg);
+                   margin-bottom: 12px; }
+    #scam-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+    #scam-dot.running { background: var(--orange);
+                        box-shadow: 0 0 0 3px rgba(249,115,22,.25);
+                        animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%,100%{box-shadow:0 0 0 3px rgba(249,115,22,.25)}
+                       50%{box-shadow:0 0 0 7px rgba(249,115,22,.05)} }
+    #scam-label { font-weight: 600; }
+    #scam-detail { color: var(--muted); font-size: 12px; }
+
+    /* ---- Recordings list ---- */
+    #recordings { display: flex; flex-direction: column; gap: 6px; }
+    .rec-row { background: var(--bg); border-radius: 8px; padding: 10px 14px;
+               display: flex; align-items: center; gap: 10px; }
+    .rec-row .rec-num { flex: 1; font-size: 13px; }
+    .rec-row .rec-dur { color: var(--muted); font-size: 12px; }
+    .rec-row audio { height: 28px; }
+
+    /* ---- Controls ---- */
+    .ctrl-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+    button { background: var(--accent); color: #fff; border: none; border-radius: 8px;
+             padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+             transition: opacity .2s; }
+    button:hover { opacity: .85; }
+    button.danger { background: var(--red); }
+    button.neutral { background: var(--border); }
+
+    /* ---- Empty state ---- */
+    .empty { color: var(--muted); font-size: 13px; text-align: center; padding: 20px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div id="conn-dot"></div>
+  <span id="conn-label">Connecting…</span>
+  <h1>📞 AI Auto Caller</h1>
+  <div class="spacer"></div>
+  <span id="clock" style="color:var(--muted);font-size:13px"></span>
+</header>
+
+<main>
+
+  <!-- Stats row -->
+  <div class="card">
+    <div class="card-title">Inbound Calls</div>
+    <div class="stat-grid">
+      <div class="stat"><div class="stat-val green" id="s-active">0</div>
+        <div class="stat-label">Active Now</div></div>
+      <div class="stat"><div class="stat-val blue" id="s-total">0</div>
+        <div class="stat-label">Total Handled</div></div>
+      <div class="stat"><div class="stat-val" id="s-answered" style="color:var(--text)">—</div>
+        <div class="stat-label">Auto-Answer</div></div>
+      <div class="stat"><div class="stat-val" id="s-tts" style="color:var(--muted)">gTTS</div>
+        <div class="stat-label">TTS Engine</div></div>
+    </div>
+  </div>
+
+  <!-- Scambaiter stats -->
+  <div class="card">
+    <div class="card-title">Scambaiter</div>
+    <div id="scam-status">
+      <div id="scam-dot"></div>
+      <span id="scam-label">Idle</span>
+      <span id="scam-detail"></span>
+    </div>
+    <div class="stat-grid">
+      <div class="stat"><div class="stat-val orange" id="s-calls-made">0</div>
+        <div class="stat-label">Calls Made</div></div>
+      <div class="stat"><div class="stat-val orange" id="s-wasted">0 min</div>
+        <div class="stat-label">Time Wasted</div></div>
+      <div class="stat"><div class="stat-val" id="s-numbers" style="color:var(--text)">0</div>
+        <div class="stat-label">Scam Numbers</div></div>
+      <div class="stat"><div class="stat-val" id="s-persona" style="color:var(--muted);font-size:13px">—</div>
+        <div class="stat-label">Persona</div></div>
+    </div>
+    <div class="ctrl-row">
+      <button class="danger" onclick="stopCampaign()">Stop Campaign</button>
+      <button class="neutral" onclick="syncNumbers()">Sync Scam DB</button>
+    </div>
+  </div>
+
+  <!-- Active calls -->
+  <div class="card">
+    <div class="card-title">Active Calls</div>
+    <div id="active-calls"><div class="empty">No active calls</div></div>
+  </div>
+
+  <!-- Recordings -->
+  <div class="card">
+    <div class="card-title">Recent Recordings</div>
+    <div id="recordings"><div class="empty">No recordings yet</div></div>
+    <div class="ctrl-row">
+      <button class="neutral" onclick="loadRecordings()">Refresh</button>
+    </div>
+  </div>
+
+  <!-- Live log -->
+  <div class="card wide">
+    <div class="card-title">Live Activity Log</div>
+    <div id="log"></div>
+  </div>
+
+</main>
+
+<script>
+  const BASE = window.location.origin;
+  let ws;
+
+  // ---- WebSocket ----
+  function connect() {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${proto}://${location.host}/ws/dashboard`);
+
+    ws.onopen = () => {
+      document.getElementById('conn-dot').classList.add('live');
+      document.getElementById('conn-label').textContent = 'Live';
+      logLine('Connected to server', 'info');
+    };
+
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      handleMessage(msg);
+    };
+
+    ws.onclose = () => {
+      document.getElementById('conn-dot').classList.remove('live');
+      document.getElementById('conn-label').textContent = 'Reconnecting…';
+      setTimeout(connect, 3000);
+    };
+  }
+
+  function handleMessage(msg) {
+    const { event, data } = msg;
+    switch (event) {
+      case 'stats':         updateStats(data);       break;
+      case 'call_answered': onCallAnswered(data);     break;
+      case 'call_ended':    onCallEnded(data);        break;
+      case 'scam_update':   updateScamPanel(data);    break;
+      case 'transcript':    onTranscript(data);       break;
+      case 'recording':     onRecording(data);        break;
+      case 'sync_done':     onSyncDone(data);         break;
+    }
+  }
+
+  // ---- Stat updaters ----
+  function updateStats(d) {
+    setText('s-active',   d.active_calls   ?? 0);
+    setText('s-total',    d.total_handled  ?? 0);
+    setText('s-answered', d.auto_answer ? 'ON' : 'OFF');
+    setText('s-tts',      (d.tts_engine ?? 'gTTS').toUpperCase());
+    setText('s-numbers',  d.scam_numbers ?? 0);
+  }
+
+  function updateScamPanel(d) {
+    const dot = document.getElementById('scam-dot');
+    const label = document.getElementById('scam-label');
+    const detail = document.getElementById('scam-detail');
+
+    if (d.running) {
+      dot.classList.add('running');
+      label.textContent = 'RUNNING';
+      detail.textContent = `→ ${d.current_number ?? ''}`;
+    } else {
+      dot.classList.remove('running');
+      label.textContent = 'Idle';
+      detail.textContent = '';
+    }
+    setText('s-calls-made', d.calls_made ?? 0);
+    setText('s-wasted', `${d.total_time_wasted_minutes ?? 0} min`);
+    setText('s-persona', d.persona ?? '—');
+  }
+
+  // ---- Call events ----
+  function onCallAnswered(d) {
+    logLine(`📞 Call answered from ${d.caller}`, 'call');
+    loadActiveCalls();
+  }
+  function onCallEnded(d) {
+    logLine(`📵 Call ended with ${d.caller} (${d.duration}s)`, 'call');
+    loadActiveCalls();
+  }
+  function onTranscript(d) {
+    logLine(`🎙️ [${d.role}] ${d.text}`, 'info');
+  }
+  function onRecording(d) {
+    logLine(`🎙️ Recording ready: ${d.caller}`, 'rec');
+    loadRecordings();
+  }
+  function onSyncDone(d) {
+    logLine(`🔄 Scam DB sync: +${d.added} numbers (total ${d.total})`, 'scam');
+  }
+
+  // ---- REST calls ----
+  async function loadActiveCalls() {
+    const r = await fetch(`${BASE}/api/active-calls`);
+    const d = await r.json();
+    const el = document.getElementById('active-calls');
+    const calls = d.active_calls || [];
+    if (!calls.length) { el.innerHTML = '<div class="empty">No active calls</div>'; return; }
+    el.innerHTML = calls.map(c => `
+      <div class="call-row">
+        <span class="badge badge-in">IN</span>
+        <span class="num">${c.caller_number}</span>
+        <span class="dur">${elapsed(c.start_time)}</span>
+      </div>`).join('');
+  }
+
+  async function loadRecordings() {
+    const r = await fetch(`${BASE}/api/recordings`);
+    const d = await r.json();
+    const el = document.getElementById('recordings');
+    const recs = d.recordings || [];
+    if (!recs.length) { el.innerHTML = '<div class="empty">No recordings yet</div>'; return; }
+    el.innerHTML = recs.slice(0, 5).map(rec => `
+      <div class="rec-row">
+        <span class="rec-num">${rec.caller_number}</span>
+        <span class="rec-dur">${rec.duration_seconds ?? 0}s</span>
+        ${rec.file_path
+          ? `<audio controls src="${BASE}/api/recordings/${rec.recording_id}/audio"></audio>`
+          : '<span style="color:var(--muted);font-size:11px">No file</span>'}
+      </div>`).join('');
+  }
+
+  async function stopCampaign() {
+    await fetch(`${BASE}/api/scambaiter/stop`, { method: 'POST' });
+    logLine('⛔ Campaign stop requested', 'scam');
+  }
+
+  async function syncNumbers() {
+    logLine('🔄 Syncing scam number database…', 'scam');
+    const r = await fetch(`${BASE}/api/scambaiter/sync`, { method: 'POST' });
+    const d = await r.json();
+    logLine(`✅ Sync done: +${d.added} numbers`, 'scam');
+  }
+
+  // ---- Helpers ----
+  function setText(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+  }
+
+  function logLine(text, cls = 'info') {
+    const log = document.getElementById('log');
+    const ts = new Date().toLocaleTimeString();
+    const div = document.createElement('div');
+    div.className = `log-line ${cls}`;
+    div.innerHTML = `<span class="ts">${ts}</span>${text}`;
+    log.prepend(div);
+    // Keep last 200 lines
+    while (log.children.length > 200) log.removeChild(log.lastChild);
+  }
+
+  function elapsed(isoStr) {
+    if (!isoStr) return '';
+    const secs = Math.round((Date.now() - new Date(isoStr)) / 1000);
+    return secs < 60 ? `${secs}s` : `${Math.floor(secs/60)}m ${secs%60}s`;
+  }
+
+  // ---- Clock ----
+  setInterval(() => {
+    document.getElementById('clock').textContent =
+      new Date().toLocaleTimeString();
+  }, 1000);
+
+  // ---- Poll stats every 10s as fallback ----
+  async function pollStats() {
+    try {
+      const [health, settings, scamStatus] = await Promise.all([
+        fetch(`${BASE}/api/health`).then(r => r.json()),
+        fetch(`${BASE}/api/settings`).then(r => r.json()),
+        fetch(`${BASE}/api/scambaiter/status`).then(r => r.json()),
+      ]);
+      updateStats({
+        active_calls:  health.active_calls,
+        total_handled: health.total_calls_processed,
+        auto_answer:   settings.auto_answer_enabled,
+        tts_engine:    settings.tts_engine,
+      });
+      updateScamPanel(scamStatus);
+    } catch(e) {}
+  }
+
+  // ---- Boot ----
+  connect();
+  loadActiveCalls();
+  loadRecordings();
+  pollStats();
+  setInterval(pollStats, 10000);
+  setInterval(loadActiveCalls, 5000);
+</script>
+</body>
+</html>

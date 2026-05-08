@@ -7,6 +7,7 @@ import 'responses_screen.dart';
 import 'settings_screen.dart';
 import 'call_history_screen.dart';
 import 'scambaiter_screen.dart';
+import 'recordings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -365,6 +366,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 } catch (e) {
                   _showError('TTS test failed: $e');
                 }
+              },
+            ),
+            _buildActionCard(
+              'Recordings',
+              Icons.mic,
+              () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const RecordingsScreen()),
+                );
               },
             ),
             _buildActionCard(
